@@ -24,14 +24,14 @@ Cloud Runが各処理完了後にスプレッドシートを更新し、AppSheet
 
 ### 2.1 `Users`（ユーザー情報一覧）
 
-ユーザーマスタ61項目をすべて格納する。Cloud RunがCloud SQLの `users` テーブルから全件読み込んで書き出す。
+ユーザーマスタ68項目をすべて格納する。Cloud RunがCloud SQLの `users` テーブルから全件読み込んで書き出す。
 
 | # | カラム名 | データ型 | Key | 説明 |
 |---|---------|---------|-----|------|
 | 1 | `user_id` | Text | | ユーザーID（A100000形式。システム自動採番） |
 | 2 | `email` | Email | ✓ | Google Workspaceメールアドレス（主キー） |
-| 3 | `family_name` | Text | | 姓 |
-| 4 | `given_name` | Text | | 名 |
+| 3 | `family_name` | Text | | 姓（苗字）※GWS Last Name に対応 |
+| 4 | `given_name` | Text | | 名（名前）※GWS First Name に対応 |
 | 5 | `family_name_yomi` | Text | | 姓よみ |
 | 6 | `given_name_yomi` | Text | | 名よみ |
 | 7 | `company` | Text | | 会社名 |
@@ -48,47 +48,54 @@ Cloud Runが各処理完了後にスプレッドシートを更新し、AppSheet
 | 18 | `email3` | Email | | メールアドレス3 |
 | 19 | `primary_flag` | Number | | プライマリフラグ（1：優先） |
 | 20 | `display_flag` | Number | | 表示フラグ（1：表示） |
-| 21 | `calendar_enabled` | Number | | カレンダー有効（1：有効） |
-| 22 | `contacts_enabled` | Number | | コンタクト有効（1：有効） |
-| 23 | `workflow_enabled` | Number | | ワークフロー有効（1：有効） |
-| 24 | `board_enabled` | Number | | ボード有効（1：有効） |
-| 25 | `expense_enabled` | Number | | 経費有効（1：有効） |
-| 26 | `attendance_enabled` | Number | | 勤怠有効（1：有効） |
+| 21 | `calendar_enabled` | Number | | rakumoカレンダー有効（1：有効）。デフォルト：1（割り当て） |
+| 22 | `contacts_enabled` | Number | | rakumoコンタクト有効（1：有効）。デフォルト：1（割り当て） |
+| 23 | `workflow_enabled` | Number | | rakumoワークフロー有効（1：有効）。デフォルト：1（割り当て） |
+| 24 | `board_enabled` | Number | | rakumoボード有効（1：有効）。デフォルト：1（割り当て） |
+| 25 | `expense_enabled` | Number | | rakumo経費有効（1：有効）。デフォルト：1（割り当て） |
+| 26 | `attendance_enabled` | Number | | rakumo勤怠有効（1：有効）。デフォルト：1（割り当て） |
 | 27 | `notes` | Text | | 備考（カスタム項目） |
-| 28 | `primary_org_name` | Text | | 主務組織名 |
-| 29 | `primary_org_email` | Email | | 主務組織メールアドレス |
-| 30 | `concurrent_org1_name` | Text | | 兼務組織名1 |
-| 31 | `concurrent_org1_email` | Email | | 兼務組織メールアドレス1 |
-| 32 | `concurrent_org1_job_title` | Text | | 兼務組織役職1 |
-| 33 | `concurrent_org2_name` | Text | | 兼務組織名2 |
-| 34 | `concurrent_org2_email` | Email | | 兼務組織メールアドレス2 |
-| 35 | `concurrent_org2_job_title` | Text | | 兼務組織役職2 |
-| 36 | `concurrent_org3_name` | Text | | 兼務組織名3 |
-| 37 | `concurrent_org3_email` | Email | | 兼務組織メールアドレス3 |
-| 38 | `concurrent_org3_job_title` | Text | | 兼務組織役職3 |
-| 39 | `concurrent_org4_name` | Text | | 兼務組織名4 |
-| 40 | `concurrent_org4_email` | Email | | 兼務組織メールアドレス4 |
-| 41 | `concurrent_org4_job_title` | Text | | 兼務組織役職4 |
-| 42 | `concurrent_org5_name` | Text | | 兼務組織名5 |
-| 43 | `concurrent_org5_email` | Email | | 兼務組織メールアドレス5 |
-| 44 | `concurrent_org5_job_title` | Text | | 兼務組織役職5 |
-| 45 | `concurrent_org6_name` | Text | | 兼務組織名6 |
-| 46 | `concurrent_org6_email` | Email | | 兼務組織メールアドレス6 |
-| 47 | `concurrent_org6_job_title` | Text | | 兼務組織役職6 |
-| 48 | `concurrent_org7_name` | Text | | 兼務組織名7 |
-| 49 | `concurrent_org7_email` | Email | | 兼務組織メールアドレス7 |
-| 50 | `concurrent_org7_job_title` | Text | | 兼務組織役職7 |
-| 51 | `concurrent_org8_name` | Text | | 兼務組織名8 |
-| 52 | `concurrent_org8_email` | Email | | 兼務組織メールアドレス8 |
-| 53 | `concurrent_org8_job_title` | Text | | 兼務組織役職8 |
-| 54 | `concurrent_org9_name` | Text | | 兼務組織名9 |
-| 55 | `concurrent_org9_email` | Email | | 兼務組織メールアドレス9 |
-| 56 | `concurrent_org9_job_title` | Text | | 兼務組織役職9 |
-| 57 | `concurrent_org10_name` | Text | | 兼務組織名10 |
-| 58 | `concurrent_org10_email` | Email | | 兼務組織メールアドレス10 |
-| 59 | `concurrent_org10_job_title` | Text | | 兼務組織役職10 |
-| 60 | `status` | Enum | | ステータス（active / inactive / deleted） |
-| 61 | `updated_at` | DateTime | | 最終更新日時 |
+| 28 | `password` | Text | | パスワード（8〜100文字ASCII）※GWSアカウント作成時のみ使用 |
+| 29 | `suspended` | Number | | ユーザー一時停止フラグ（1：停止） |
+| 30 | `change_password_at_next_login` | Number | | 次回ログイン時パスワード変更フラグ。デフォルト：1（TRUE） |
+| 31 | `include_in_global_address_list` | Number | | GAL表示フラグ（1：表示）。デフォルト：1（TRUE） |
+| 32 | `org_unit_path` | Text | | 所属組織パス（例：/営業部） |
+| 33 | `recovery_email` | Email | | アカウント再設定用メールアドレス |
+| 34 | `recovery_phone` | Text | | アカウント復元用電話番号（E.164形式） |
+| 35 | `primary_org_name` | Text | | 主務組織名 |
+| 36 | `primary_org_email` | Email | | 主務組織メールアドレス |
+| 37 | `concurrent_org1_name` | Text | | 兼務組織名1 |
+| 38 | `concurrent_org1_email` | Email | | 兼務組織メールアドレス1 |
+| 39 | `concurrent_org1_job_title` | Text | | 兼務組織役職1 |
+| 40 | `concurrent_org2_name` | Text | | 兼務組織名2 |
+| 41 | `concurrent_org2_email` | Email | | 兼務組織メールアドレス2 |
+| 42 | `concurrent_org2_job_title` | Text | | 兼務組織役職2 |
+| 43 | `concurrent_org3_name` | Text | | 兼務組織名3 |
+| 44 | `concurrent_org3_email` | Email | | 兼務組織メールアドレス3 |
+| 45 | `concurrent_org3_job_title` | Text | | 兼務組織役職3 |
+| 46 | `concurrent_org4_name` | Text | | 兼務組織名4 |
+| 47 | `concurrent_org4_email` | Email | | 兼務組織メールアドレス4 |
+| 48 | `concurrent_org4_job_title` | Text | | 兼務組織役職4 |
+| 49 | `concurrent_org5_name` | Text | | 兼務組織名5 |
+| 50 | `concurrent_org5_email` | Email | | 兼務組織メールアドレス5 |
+| 51 | `concurrent_org5_job_title` | Text | | 兼務組織役職5 |
+| 52 | `concurrent_org6_name` | Text | | 兼務組織名6 |
+| 53 | `concurrent_org6_email` | Email | | 兼務組織メールアドレス6 |
+| 54 | `concurrent_org6_job_title` | Text | | 兼務組織役職6 |
+| 55 | `concurrent_org7_name` | Text | | 兼務組織名7 |
+| 56 | `concurrent_org7_email` | Email | | 兼務組織メールアドレス7 |
+| 57 | `concurrent_org7_job_title` | Text | | 兼務組織役職7 |
+| 58 | `concurrent_org8_name` | Text | | 兼務組織名8 |
+| 59 | `concurrent_org8_email` | Email | | 兼務組織メールアドレス8 |
+| 60 | `concurrent_org8_job_title` | Text | | 兼務組織役職8 |
+| 61 | `concurrent_org9_name` | Text | | 兼務組織名9 |
+| 62 | `concurrent_org9_email` | Email | | 兼務組織メールアドレス9 |
+| 63 | `concurrent_org9_job_title` | Text | | 兼務組織役職9 |
+| 64 | `concurrent_org10_name` | Text | | 兼務組織名10 |
+| 65 | `concurrent_org10_email` | Email | | 兼務組織メールアドレス10 |
+| 66 | `concurrent_org10_job_title` | Text | | 兼務組織役職10 |
+| 67 | `status` | Enum | | ステータス（active / inactive / deleted） |
+| 68 | `updated_at` | DateTime | | 最終更新日時 |
 
 - **テーブル権限**：Read Only
 - **PII設定**：`family_name`、`given_name`、`family_name_yomi`、`given_name_yomi`、`email`、`mobile_phone`、`business_phone`
@@ -188,7 +195,7 @@ Cloud SQLの `sync_logs` テーブル（`sync_type` で `google_sync` / `rakumo_
 - **同期方式**：Cloud RunがCloud SQL更新後、スプレッドシートを全件書き直し（`values.clear` → `values.update`）する。差分更新は行わない。
 - **文字コード**：スプレッドシートはUTF-8で管理する。
 - **アーカイブ**：ログシートは肥大化を防ぐため、1ヶ月分を目安にCloud Run側でクレンジングを行う。
-- **Usersシートの列数**：兼務組織役職1〜10の追加により計61列（ユーザーマスタ58項目＋user_id＋status・updated_at）。AppSheetでは必要な列のみ表示カラムとして設定する。
+- **Usersシートの列数**：Googleアカウント属性カラム7項目（password / suspended / change_password_at_next_login / include_in_global_address_list / org_unit_path / recovery_email / recovery_phone）の追加により計68列（旧61列＋7項目）。AppSheetでは必要な列のみ表示カラムとして設定する。
 - **SyncLogsシートのビュー分割**：`sync_type` カラムでフィルタし、「Google同期ログ」（google_sync）と「rakumoコンタクトログ」（rakumo_contact）を別ビューとして表示する。シート自体は1枚に統合する。
 
 ---

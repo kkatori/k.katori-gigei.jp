@@ -34,7 +34,7 @@
 | 方針 | 内容 |
 |------|------|
 | 正規化 | マスタ系は第3正規形を基本とする。ただし兼務組織は組織数が最大10と有限のため、usersテーブル内にフラット展開する |
-| 論理削除 | マスタ系テーブル（users, groups, group_members）は `status` + `deleted_at` による論理削除を採用。物理削除は行わない |
+| 論理削除 | マスタ系テーブル（users, groups, group_members）は `status` + `deleted_at` による論理削除を採用。ただしGWSではグループの物理削除のみ可能（論理削除不可）のため、Cloud SQL上はstatusを'deleted'に更新し論理削除として管理する。アカウントの削除はsuspended状態への変更による論理削除を用いる |
 | 物理削除 | ログ系テーブル（operation_logs, sync_logs, csv_download_logs）はローテーションジョブによる物理削除を採用 |
 | 文字コード | `utf8mb4`（日本語・絵文字対応） |
 | タイムゾーン | DATETIME型でUTC保存。アプリケーション層でJST変換 |
@@ -174,7 +174,7 @@
 
 ユーザー情報を一元管理する。要件定義書の5テーブル（Googleアカウント、rakumoプロファイル、会社・個人情報）を物理的には1テーブルに統合し、AppSheet画面のセクション分割で論理的に分離表示する。
 
-**カラム数：** 61（兼務組織10箇所×3フィールド＝30カラム含む）
+**カラム数：** 68（兼務組織10箇所×3フィールド＝30カラム含む。Googleアカウント属性7カラム追加）
 
 ```sql
 CREATE TABLE users (
@@ -186,6 +186,13 @@ CREATE TABLE users (
     email           VARCHAR(255)    NOT NULL COMMENT 'Google Workspaceメールアドレス（主キー相当）',
     family_name     VARCHAR(100)    NOT NULL COMMENT '姓',
     given_name      VARCHAR(100)    NOT NULL COMMENT '名',
+    password        VARCHAR(100)    COMMENT 'パスワード（8〜100文字ASCII）',
+    suspended       TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'ユーザー一時停止フラグ',
+    change_password_at_next_login TINYINT(1) NOT NULL DEFAULT 1 COMMENT '次回ログイン時パスワード変更',
+    include_in_global_address_list TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'GAL表示フラグ',
+    org_unit_path   VARCHAR(256)    COMMENT '所属組織パス（例: /営業部）',
+    recovery_email  VARCHAR(256)    COMMENT 'アカウント再設定用メールアドレス',
+    recovery_phone  VARCHAR(20)     COMMENT 'アカウント復元用電話番号（E.164形式）',
 
     -- 会社・個人情報（画面B セクション3）
     family_name_yomi VARCHAR(100)   COMMENT '姓よみ',
@@ -206,12 +213,12 @@ CREATE TABLE users (
     -- rakumoプロファイル情報（画面B セクション2）
     primary_flag    TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'プライマリフラグ（1：優先）',
     display_flag    TINYINT(1)      NOT NULL DEFAULT 1 COMMENT '表示フラグ（1：表示）',
-    calendar_enabled   TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'rakumo Calendar有効（1：有効）',
-    contacts_enabled   TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'rakumo Contacts有効（1：有効）',
-    workflow_enabled   TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'rakumo Workflow有効（1：有効）',
-    board_enabled      TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'rakumo Board有効（1：有効）',
-    expense_enabled    TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'rakumo Expense有効（1：有効）',
-    attendance_enabled TINYINT(1)   NOT NULL DEFAULT 0 COMMENT 'rakumo Attendance有効（1：有効）',
+    calendar_enabled   TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'rakumo Calendar有効（1：有効）。デフォルト: 割り当て',
+    contacts_enabled   TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'rakumo Contacts有効（1：有効）。デフォルト: 割り当て',
+    workflow_enabled   TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'rakumo Workflow有効（1：有効）。デフォルト: 割り当て',
+    board_enabled      TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'rakumo Board有効（1：有効）。デフォルト: 割り当て',
+    expense_enabled    TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'rakumo Expense有効（1：有効）。デフォルト: 割り当て',
+    attendance_enabled TINYINT(1)   NOT NULL DEFAULT 1 COMMENT 'rakumo Attendance有効（1：有効）。デフォルト: 割り当て',
     notes           VARCHAR(256)    COMMENT '備考（rakumoカスタム項目）',
 
     -- 組織情報：主務組織
@@ -411,7 +418,7 @@ CREATE TABLE sync_logs (
 |-----------|------|---------|
 | `google_sync` | rakumo Google同期実行 | AppSheet手動 / Cloud Scheduler |
 | `rakumo_contact` | rakumoコンタクト更新 | AppSheet手動 / Cloud Scheduler |
-| `log_rotation` | ログローテーション実行 | Cloud Scheduler（毎日03:00 JST） |
+| `log_rotation` | ログローテーション実行 | Cloud Scheduler（毎日01:00 JST。settingsテーブルのlog_rotation_timeで変更可能） |
 
 ---
 
@@ -456,7 +463,10 @@ CREATE TABLE settings (
 INSERT INTO settings (setting_key, setting_value, description) VALUES
 ('success_log_retention_days', '90',  '成功ログの保存日数（0で無期限）'),
 ('failure_log_retention_days', '365', '失敗ログの保存日数（0で無期限）'),
-('csv_file_retention_days',    '30',  'CSVファイルの保持日数');
+('csv_file_retention_days',    '30',  'CSVファイルの保持日数'),
+('log_output_level',           'summary',   'ログ出力レベル（summary/detail）。AppSheetから変更可能'),
+('log_rotation_time',          '01:00',     'ログローテーション実行時刻（JST）。AppSheetから変更可能'),
+('execution_mode',             'immediate', '実行モード（immediate/scheduled）。AppSheetから変更可能');
 ```
 
 ---
@@ -504,13 +514,13 @@ INSERT INTO settings (setting_key, setting_value, description) VALUES
 
 | テーブル | 削除方式 | 保持期間 | 備考 |
 |---------|---------|---------|------|
-| `users` | 論理削除（status='deleted', deleted_at設定） | 無期限 | **GWS側は物理削除せず「停止（Suspended）」に変更する** |
-| `groups` | 論理削除（status='deleted', deleted_at設定） | 無期限 | GWS groups.delete と連動 |
+| `users` | 論理削除（status='deleted', deleted_at設定） | 無期限 | **GWS側は物理削除せず「停止（Suspended）」に変更する（suspendedフラグによる論理削除）** |
+| `groups` | 論理削除（status='deleted', deleted_at設定） | 無期限 | GWSではグループの物理削除のみ可能（論理削除不可）。GWS側はgroups.deleteを実行し、Cloud SQL上はstatusを'deleted'に更新して論理削除として管理する |
 | `group_members` | 論理削除（status='deleted'） | 無期限 | GWS members.delete と連動 |
 
 ### 6.2 ログデータ（ローテーション対象）
 
-settingsテーブルの保存期間に基づき、Cloud Schedulerジョブ（毎日03:00 JST）が自動削除する。
+settingsテーブルの保存期間に基づき、Cloud Schedulerジョブ（毎日01:00 JST。実行時刻はsettingsテーブルのlog_rotation_timeで変更可能）が自動削除する。
 
 | テーブル | 成功ログ保存期間 | 失敗ログ保存期間 | 削除方式 |
 |---------|:---:|:---:|------|
@@ -593,7 +603,7 @@ gcloud run jobs execute user-mgmt-migration \
 | `users` | 10,000件 | ~4 KB | ~40 MB |
 | `groups` | 1,000件 | ~5 KB | ~5 MB |
 | `group_members` | 50,000件 | ~0.5 KB | ~25 MB |
-| `settings` | 3件 | ~0.5 KB | ~1 KB |
+| `settings` | 6件 | ~0.5 KB | ~3 KB |
 | **合計（マスタ）** | | | **~70 MB** |
 
 ### 8.2 ログデータ増加量（年間）

@@ -280,6 +280,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env")
 ```
 
+> 運用パラメータはCloud SQLの設定テーブルから取得する。AppSheetから変更可能。
+> 設定テーブル（`settings`）からロードするキー：`execution_mode`, `log_output_level`, `log_rotation_time`, `success_log_retention_days`, `error_log_retention_days`, `csv_retention_days`
+
 ### 5.2 database.py（DB接続）
 
 ```python
@@ -300,7 +303,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 #### OIDC認証検証（AppSheet → Cloud Run）
 ```python
 # Cloud Run はデフォルトで OIDC 検証を実施
-# AppSheet Automation の Webhook では "Authorization: Bearer <OIDC_TOKEN>" を送信
+# AppSheet アクション（Webhook）では "Authorization: Bearer <OIDC_TOKEN>" を送信
 async def verify_oidc_token(authorization: str = Header(...)) -> dict:
     """Cloud Run 内部でサービスアカウントトークンを検証"""
     # google-auth ライブラリで検証
@@ -383,9 +386,12 @@ async def generate_group_id(session: AsyncSession) -> str:
 #### GWSへのユーザー登録フロー（CSVアップロード）
 ```
 1. Cloud StorageからCSV読み込み（pandas）
-2. バリデーション（必須項目・重複チェック）
+2. バリデーション（必須項目チェック）
+   ※ 重複チェックはGWS API呼び出し時に実施（GWSからのエラーレスポンスで検知）
+   ※ AppSheet入力時・CSV取込時のバリデーションでは重複チェックを行わない
 3. 全件ループ：Cloud SQL UPSERT（トランザクション）
-4. 全件ループ：GWS Admin SDK API呼び出し（1件ずつ、エラー時は個別記録）
+4. GWS Admin SDK Batch APIリクエストで一括反映（エラー時は個別記録）
+   ※ Google Workspace Directory API のBatch APIリクエストを使用（バッチサイズ・並列度は設計フェーズで決定）
 5. 実行ログをCloud SQL（operation_logs）に記録
 6. Google Sheets同期（spreadsheet_service）
 7. レスポンス返却（成功件数・エラー件数）
@@ -448,6 +454,23 @@ GWS_USER_DEFAULTS = {
 
 > CSVに上記フィールドが含まれない場合はデフォルト値を適用する。CSVに明示的な値がある場合はその値を優先する。
 
+#### rakumoライセンスフラグのデフォルト設定
+
+新規ユーザー作成時、rakumoライセンスフラグはすべて **有効（1）** をデフォルトとする。
+
+```python
+RAKUMO_LICENSE_DEFAULTS = {
+    "calendar_enabled":   1,   # rakumoカレンダー有効
+    "contacts_enabled":   1,   # rakumoコンタクト有効
+    "workflow_enabled":   1,   # rakumoワークフロー有効
+    "board_enabled":      1,   # rakumoボード有効
+    "expense_enabled":    1,   # rakumo経費有効
+    "attendance_enabled": 1,   # rakumo勤怠有効
+}
+```
+
+> CSVにライセンスフラグが含まれない場合はすべて `1`（有効）を適用する。CSVに明示的な値がある場合はその値を優先する。
+
 #### Googleアカウント情報エクスポート（確定 3/26）
 
 `/api/users/export` では以下20フィールドをCSV出力する。
@@ -455,8 +478,12 @@ DB管理フィールドはCloud SQLから、出力専用フィールドはGWS Ad
 
 | 分類 | フィールド |
 |------|----------|
-| DB管理 | primaryEmail / password / First Name / Last Name / orgUnitPath / recoveryEmail / recoveryPhone / changePasswordAtNextLogin / includeInGlobalAddressList |
+| DB管理 | primaryEmail / password / First Name（givenName・名） / Last Name（familyName・姓） / orgUnitPath / recoveryEmail / recoveryPhone / changePasswordAtNextLogin / includeInGlobalAddressList |
 | GWS出力専用 | UserID / isAdmin / suspended / aliases[] / isMailboxSetup / suspensionReason / creationTime / deletionTime / isEnrolledIn2Sv / isEnforcedIn2Sv |
+
+> **フィールドマッピング（Google Workspace API 仕様）**：
+> - First Name = `givenName` = 名（名前）
+> - Last Name = `familyName` = 姓（苗字）
 
 ---
 
@@ -544,10 +571,25 @@ GWS_GROUP_DEFAULTS = {
         "whoCanDiscoverGroup":       "ALL_MEMBERS_CAN_DISCOVER",
         "defaultSender":             "",
     },
+    "mailing": {
+        "whoCanJoin":                "INVITED_CAN_JOIN",
+        "whoCanViewMembership":      "ALL_MEMBERS_CAN_VIEW",
+        "whoCanViewGroup":           "ALL_MEMBERS_CAN_VIEW",
+        "whoCanPostMessage":         "ALL_IN_DOMAIN_CAN_POST",
+        "allowWebPosting":           "FALSE",
+        "isArchived":                "TRUE",
+        "membersCanPostAsTheGroup":  "TRUE",
+        "includeInGlobalAddressList":"TRUE",
+        "whoCanLeaveGroup":          "NONE_CAN_LEAVE",
+        "whoCanModerateMembers":     "NONE",
+        "whoCanModerateContent":     "NONE",
+        "whoCanAssistContent":       "NONE",
+        "enableCollaborativeInbox":  "FALSE",
+        "whoCanDiscoverGroup":       "ALL_MEMBERS_CAN_DISCOVER",
+        "defaultSender":             "",
+    },
 }
 ```
-
-> `mailing` / `other` 種別のデフォルト設定は必要に応じて追加する。
 
 #### Googleグループ情報エクスポート（確定 3/26）
 
@@ -710,14 +752,15 @@ async def generate_signed_url(bucket_name: str, blob_name: str) -> str:
 ### 6.7 機能7：ログローテーション機能（要件定義書 13.2節）
 
 #### 実装方針
-- Cloud Scheduler から毎日03:00 JSTに `POST /api/batch/log-rotation` を呼び出し
+- Cloud Scheduler から毎日 **01:00 JST（AM 1:00）** に `POST /api/batch/log-rotation` を呼び出し
+  ※ 実行時刻は Cloud SQL `settings` テーブルの `log_rotation_time` キーから取得する
 - settingsテーブルから保存期間（日数）を取得し、期限超過データを一括削除
 - ログレコード削除とCSVファイル削除を1トランザクションで処理
 
 #### 処理フロー
 
 ```
-Cloud Scheduler（毎日03:00 JST）
+Cloud Scheduler（毎日 01:00 JST）
     │ HTTP POST（OIDC認証）
     ▼
 Cloud Run /api/batch/log-rotation
@@ -862,6 +905,31 @@ def mask_pii(event_dict: dict) -> dict:
             event_dict[key] = "****"
     return event_dict
 ```
+
+### 8.4 ログ出力レベル設定
+
+ログの出力粒度は Cloud SQL の `settings` テーブルで管理し、AppSheetの設定画面から変更可能とする。
+
+| 項目 | 詳細 |
+|------|------|
+| 設定キー | `log_output_level` |
+| 格納場所 | Cloud SQL `settings` テーブル |
+| 値 | `summary`（サマリ：処理件数・成否のみ） / `detail`（詳細：全操作レコード） |
+| デフォルト | `summary` |
+| 変更方法 | AppSheet 設定画面から更新 |
+
+```python
+# 起動時または処理開始時にDBから設定を読み込む
+async def get_log_output_level(db: AsyncSession) -> str:
+    """settingsテーブルから log_output_level を取得する（デフォルト: summary）"""
+    result = await db.execute(
+        text("SELECT value FROM settings WHERE key = 'log_output_level'")
+    )
+    row = result.scalar()
+    return row if row in ("summary", "detail") else "summary"
+```
+
+> `summary` モードでは処理全体の件数サマリのみをログに記録する。`detail` モードでは全レコードの操作ログを記録する。
 
 ---
 
@@ -1098,13 +1166,13 @@ git push → Cloud Build trigger
 | メソッド | パス | 機能 | 呼び出し元 |
 |---------|------|------|-----------|
 | GET | `/health` | ヘルスチェック | Cloud Run |
-| POST | `/api/v1/users/import` | ユーザーCSV取り込み | AppSheet Automation |
-| PUT | `/api/v1/users/{id}` | ユーザー1件更新 | AppSheet Action |
-| DELETE | `/api/v1/users/{id}` | ユーザー1件削除 | AppSheet Action |
-| POST | `/api/v1/groups/import` | グループCSV取り込み | AppSheet Automation |
-| PUT | `/api/v1/groups/{id}` | グループ1件更新 | AppSheet Action |
-| POST | `/api/v1/sync/google` | Google同期実行 | AppSheet Action / Cloud Scheduler |
-| POST | `/api/v1/sync/rakumo` | rakumoコンタクト更新 | AppSheet Action / Cloud Scheduler |
-| POST | `/api/v1/csv/export` | 他システム連携CSV生成 | AppSheet Action |
+| POST | `/api/v1/users/import` | ユーザーCSV取り込み | オートメーション（Bot） |
+| PUT | `/api/v1/users/{id}` | ユーザー1件更新 | アクション（Webhook） |
+| DELETE | `/api/v1/users/{id}` | ユーザー1件削除 | アクション（Webhook） |
+| POST | `/api/v1/groups/import` | グループCSV取り込み | オートメーション（Bot） |
+| PUT | `/api/v1/groups/{id}` | グループ1件更新 | アクション（Webhook） |
+| POST | `/api/v1/sync/google` | Google同期実行 | アクション（Webhook） / Cloud Scheduler |
+| POST | `/api/v1/sync/rakumo` | rakumoコンタクト更新 | アクション（Webhook） / Cloud Scheduler |
+| POST | `/api/v1/csv/export` | 他システム連携CSV生成 | アクション（Webhook） |
 | GET | `/api/v1/csv/download-url` | 署名付きURL発行 | AppSheet Virtual Column |
 | GET | `/api/v1/logs` | 実行ログ一覧取得 | AppSheet（Sheets同期後）|

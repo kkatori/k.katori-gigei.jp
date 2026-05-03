@@ -169,6 +169,8 @@ Cloud Run → Cloud SQL（データ取得）
 
 実行時環境変数は以下の方針で管理する。
 
+> 運用パラメータ（実行モード、ログ設定、ローテーション時刻等）はCloud SQLの設定テーブルに格納し、AppSheetから変更可能とする。環境変数にはインフラ接続情報（DB接続文字列、サービスアカウントキー等）のみを格納する。
+
 | 変数名 | 管理方法 | 内容 |
 |--------|---------|------|
 | `DB_HOST` | Secret Manager | Cloud SQL 接続ホスト |
@@ -307,6 +309,13 @@ CREATE TABLE users (
     concurrent_org10_name  VARCHAR(255) COMMENT '兼務組織名10',
     concurrent_org10_email VARCHAR(255) COMMENT '兼務組織メールアドレス10',
     concurrent_org10_job_title VARCHAR(255) COMMENT '兼務組織役職10',
+    password        VARCHAR(100)    COMMENT 'パスワード',
+    suspended       TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'ユーザー一時停止',
+    change_password_at_next_login TINYINT(1) NOT NULL DEFAULT 1 COMMENT '次回ログイン時パスワード変更',
+    include_in_global_address_list TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'GAL表示',
+    org_unit_path   VARCHAR(256)    COMMENT '所属組織パス',
+    recovery_email  VARCHAR(256)    COMMENT '再設定用メールアドレス',
+    recovery_phone  VARCHAR(20)     COMMENT '復元用電話番号（E.164形式）',
     status          ENUM('active','inactive','deleted') NOT NULL DEFAULT 'active',
     created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -582,7 +591,8 @@ Cloud Run サービスアカウントに以下のドメイン全体の委任（D
 |---------|-------------------|---------|------------|
 | `google-sync-daily` | `0 {H} * * *`（毎日指定時刻） | Google同期の自動実行 | Asia/Tokyo |
 | `rakumo-contact-daily` | `30 {H} * * *`（Google同期の30分後） | rakumoコンタクト更新 | Asia/Tokyo |
-| `log-rotation-daily` | `0 3 * * *`（毎日03:00 JST） | ログローテーション（settingsテーブルの保存期間に基づき、期限超過したログレコードおよびCSVファイルを削除） | Asia/Tokyo |
+| `log-rotation-daily` | `0 16 * * *`（毎日UTC 16:00 = JST 01:00） | ログローテーション（settingsテーブルの保存期間に基づき、期限超過したログレコードおよびCSVファイルを削除）。実行時刻はCloud SQLの設定テーブルで管理（デフォルト: AM 1:00 JST） | UTC |
+| `google-account-scheduled` | ユーザーごとに予定実行日付で指定 | Googleアカウント登録の予約実行（日付形式: YYYY/MM/DD hh、JST） | Asia/Tokyo |
 
 > 実行時刻（`{H}`）はAppSheetのスケジュール設定画面から1時間単位で変更可能。変更時はCloud Run経由でCloud Scheduler APIのcronを更新する（`PUT /api/scheduler/google-sync` 参照）。
 
@@ -648,6 +658,7 @@ Cloud Run（`user-mgmt-api`）が提供するHTTPエンドポイント。
 | POST | `/api/batch/google-sync` | Google同期バッチ（Scheduler用） | Scheduler | 9.1 |
 | POST | `/api/batch/rakumo-contact` | rakumoコンタクト更新バッチ（Scheduler用） | Scheduler | 9.1 |
 | POST | `/api/batch/log-rotation` | ログローテーション実行（settingsに基づきログ・CSVファイル削除） | Scheduler | 13.2 |
+| POST | `/api/users/scheduled` | Googleアカウント登録の予約実行（日付形式: YYYY/MM/DD hh、JST） | Scheduler | 4.8 |
 | PUT | `/api/scheduler/google-sync` | Google同期定期実行スケジュールの時刻更新 | AppSheet | 9.1 |
 | GET | `/health` | ヘルスチェック | - | - |
 
@@ -681,6 +692,7 @@ Cloud Run（`user-mgmt-api`）が提供するHTTPエンドポイント。
 | 処理順序 | ①CSVバリデーション → ②Cloud SQL更新（トランザクション） → ③GWS Admin SDK呼び出し → ④ログ記録 |
 | GWSエラー時 | Cloud SQL更新はロールバックせず、エラーログを記録して再実行可能とする |
 | DB更新エラー時 | トランザクションロールバック |
+| GWS API呼び出し | Google Workspace Directory API のBatch APIリクエストを使用して一括処理を行う。具体的な実装方式（バッチサイズ・並列度等）は設計フェーズで決定する |
 | レスポンス | 処理件数（成功/エラー件数） |
 
 #### GET `/api/users/export`
@@ -689,6 +701,7 @@ Cloud Run（`user-mgmt-api`）が提供するHTTPエンドポイント。
 |------|------|
 | 処理概要 | Googleアカウント情報出力項目（確定 3/26）に基づくCSVを生成してCloud Storageに保存する |
 | 出力フィールド（計20項目） | UserID / primaryEmail / password / isAdmin / suspended / changePasswordAtNextLogin / First Name / Last Name / name / aliases[] / isMailboxSetup / suspensionReason / creationTime / includeInGlobalAddressList / deletionTime / isEnrolledIn2Sv / isEnforcedIn2Sv / orgUnitPath / recoveryEmail / recoveryPhone |
+| フィールドマッピング | **First Name = givenName = 名（名前）**、**Last Name = familyName = 姓（苗字）**。Google Workspace Directory API の仕様に従い、First Name が given name（名）、Last Name が family name（姓）に対応する。DBカラムとの対応：First Name → `given_name`、Last Name → `family_name` |
 | フィールド取得元 | DB管理項目（email・family_name等）はCloud SQLから取得。出力専用項目（isAdmin・isMailboxSetup・suspensionReason・creationTime・deletionTime・isEnrolledIn2Sv・isEnforcedIn2Sv）はGWS Admin SDK `users.get` で取得 |
 | 処理順序 | ①Cloud SQLから全ユーザー取得 → ②GWS Admin SDKで出力専用フィールドを一括取得 → ③CSVマージ生成 → ④Cloud Storageに保存 → ⑤署名付きURL発行 |
 
@@ -710,6 +723,7 @@ Cloud Run（`user-mgmt-api`）が提供するHTTPエンドポイント。
 | 処理順序 | ①Pydanticバリデーション → ②Cloud SQL INSERT（トランザクション） → ③GWS `users.insert` → ④rakumoコンタクト更新 → ⑤スプレッドシート同期 → ⑥ログ記録 |
 | GWSデフォルト | `changePasswordAtNextLogin: True`・`includeInGlobalAddressList: True` を適用（プログラム設計書 6.1節） |
 | 冪等性 | 既存メールアドレスの場合はUPSERTとして処理（エラーにしない） |
+| 重複チェック | 重複チェックはGWSへの反映時（Google Workspace API呼び出し時）に実施する。AppSheet入力時点での重複チェックは行わない。 |
 | レスポンス | 作成したユーザー情報（email等） |
 
 #### PATCH `/api/users/{email}`（個別ユーザー更新）
@@ -761,6 +775,8 @@ Cloud Run（`user-mgmt-api`）が提供するHTTPエンドポイント。
 | 処理順序 | ①Cloud SQL 論理削除 → ②GWS `groups.delete` → ③スプレッドシート同期 → ④ログ記録 |
 | 注意 | グループ削除前にグループメンバーも論理削除する |
 | 冪等性 | 対象が存在しない場合は成功（スキップ）として処理 |
+
+> GWSではグループの論理削除（停止状態）は不可。グループの削除は物理削除（groups.delete）のみ。アカウントはsuspended（停止）状態への変更で論理削除として扱う。
 
 #### POST `/api/groups/{email}/members`（グループメンバー個別追加）
 
