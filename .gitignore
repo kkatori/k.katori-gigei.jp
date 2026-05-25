@@ -1,0 +1,15 @@
+# Personal Claude Code settings
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Credentials and secrets
+*.env
+config/secrets.*
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+~$*
