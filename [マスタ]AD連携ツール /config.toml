@@ -1,0 +1,10 @@
+[auth]
+From = 
+To = 
+Pass = 
+SMTPServer = smtp-relay.gmail.com
+Port = 587
+
+[mail]
+Sub = ユーザー詳細データ更新エラー
+Body = rakumo のユーザー詳細情報の更新に失敗しました。[newline][newline]エラーコードは「[errcode]」です。[newline][newline]******************************************************************************[newline]エラーコード：1[newline]　Active Directory のユーザー・グループにおいて、メールアドレスが正しく入力されているかご確認ください[newline][newline]******************************************************************************[newline]エラーコード：2[newline]　AD連携ツールが稼働しているPCやネットワーク環境、クラウドサービスの障害などにより、[newline]　データが反映されていない可能性があります[newline]　AD連携ツールが稼働しているPCにてrakumo管理画面へアクセスいただき、更新の状況をご確認ください[newline]　https://a-rakumo.appspot.com/admin/users/-/profiles[newline][newline]******************************************************************************[newline]エラーコード：3[newline]　Active Directoryからユーザー・グループ情報を取得できなかった可能性があります[newline]　以下、ユーザー・グループ情報の最終取得日となります[newline]　最終データ取得日：[update_date]
